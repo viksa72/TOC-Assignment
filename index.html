@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Turing Machine Simulator | TOC Assignment</title>
+  <meta name="description" content="An interactive Turing Machine Simulator for Theory of Computation. Visualize tape transitions step-by-step with a TypeScript backend.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="bg-grid"></div>
+  <div class="orb orb1"></div>
+  <div class="orb orb2"></div>
+  <div class="orb orb3"></div>
+
+  <div class="container">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="header-icon">⚙️</div>
+      <div>
+        <h1>Turing Machine Simulator</h1>
+        <p class="subtitle">Theory of Computation — Interactive Visualizer</p>
+      </div>
+
+      <!-- Engine mode toggle -->
+      <div class="mode-toggle">
+        <span class="mode-label">Engine:</span>
+        <button id="modeLocal"  class="mode-btn active" onclick="switchMode('local')">🖥️ Local</button>
+        <button id="modeServer" class="mode-btn"        onclick="switchMode('server')">☁️ Server</button>
+        <span id="serverIndicator" class="server-dot offline" title="Checking server…">●</span>
+      </div>
+
+      <div class="status-badge" id="statusBadge">READY</div>
+    </header>
+
+    <!-- Main layout -->
+    <div class="main-grid">
+
+      <!-- LEFT: Config Panel -->
+      <aside class="panel config-panel">
+        <h2 class="panel-title">⚡ Machine Config</h2>
+
+        <div class="field-group">
+          <label>Preset Machine</label>
+          <select id="presetSelect" onchange="loadPreset()"></select>
+        </div>
+
+        <div class="field-group">
+          <label>Input String</label>
+          <div class="input-row">
+            <input type="text" id="inputString" placeholder="e.g. 1011" spellcheck="false" autocomplete="off">
+            <button class="btn btn-load" id="loadBtn" onclick="initialize()">Load</button>
+          </div>
+        </div>
+
+        <div class="info-chip">
+          <span>🔲</span> Blank = <code>_</code>&nbsp; Start = <code>q0</code>&nbsp; Accept = <code>halt / accept</code>
+        </div>
+
+        <div class="field-group">
+          <label>Transition Rules <span class="label-hint">(state_symbol: write, R/L/N, nextState)</span></label>
+          <textarea id="transitionEditor" rows="10" spellcheck="false"
+            placeholder="q0_0: 1,R,q0&#10;q0_1: 0,R,q0&#10;q0_: _,N,halt"></textarea>
+          <div class="editor-actions">
+            <button class="btn btn-small btn-ghost" onclick="applyTransitions()">✅ Apply</button>
+            <button class="btn btn-small btn-ghost" onclick="savePresetToServer()">☁️ Save to Server</button>
+            <button class="btn btn-small btn-ghost" onclick="clearLog()">🗑️ Clear Log</button>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label>Auto-Run Speed: <span id="speedLabel">500ms</span></label>
+          <input type="range" id="speedSlider" min="50" max="1500" value="500" step="50"
+            oninput="updateSpeed(this.value)">
+        </div>
+      </aside>
+
+      <!-- RIGHT: Visualizer -->
+      <div class="viz-area">
+
+        <div class="controls-bar">
+          <button class="btn btn-primary"   id="runBtn"   onclick="run()">   <span class="btn-icon">▶</span> Run   </button>
+          <button class="btn btn-secondary" id="pauseBtn" onclick="pause()"  disabled><span class="btn-icon">⏸</span> Pause </button>
+          <button class="btn btn-accent"    id="stepBtn"  onclick="step()">  <span class="btn-icon">⏭</span> Step  </button>
+          <button class="btn btn-ghost"     onclick="resetMachine()">        <span class="btn-icon">↺</span> Reset </button>
+        </div>
+
+        <div class="tape-container">
+          <div class="tape-label">TAPE</div>
+          <div class="tape-scroll-wrapper">
+            <div id="tape" class="tape"></div>
+          </div>
+          <div class="head-arrow-wrapper">
+            <div id="headArrow" class="head-arrow">▲</div>
+          </div>
+        </div>
+
+        <div class="info-bar">
+          <div class="info-card">
+            <span class="info-label">Current State</span>
+            <span class="info-value mono" id="stateDisplay">—</span>
+          </div>
+          <div class="info-card">
+            <span class="info-label">Head Position</span>
+            <span class="info-value mono" id="headDisplay">—</span>
+          </div>
+          <div class="info-card">
+            <span class="info-label">Steps Taken</span>
+            <span class="info-value mono" id="stepsDisplay">0</span>
+          </div>
+          <div class="info-card">
+            <span class="info-label">Last Read</span>
+            <span class="info-value mono" id="lastReadDisplay">—</span>
+          </div>
+        </div>
+
+        <div id="resultBanner" class="result-banner hidden"></div>
+
+        <div class="log-panel">
+          <div class="log-header">
+            <span>📋 Computation Log</span>
+            <span id="logCount" class="log-count">0 steps</span>
+          </div>
+          <div id="computationLog" class="log-body"></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Transition Table -->
+    <div class="panel transition-table-panel">
+      <h2 class="panel-title">📊 Transition Table</h2>
+      <div id="transitionTableDisplay" class="transition-table-wrap"></div>
+    </div>
+
+  </div>
+
+  <!-- Compiled from src/main.ts -->
+  <script src="main.js"></script>
+</body>
+</html>
