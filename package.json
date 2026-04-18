@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Turing Machine Simulator — TOC Assignment",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.frontend.json",
     "dev:server": "cd backend/server && npx ts-node-dev --respawn --transpile-only src/index.ts",
     "dev": "concurrently \"npm run dev:server\" \"npm run build -- --watch\"",
     "setup": "npm install && cd backend/server && npm install"
