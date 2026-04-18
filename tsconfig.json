@@ -12,5 +12,5 @@
     "noEmitOnError": true
   },
   "include": ["public/frontend/**/*"],
-  "exclude": ["backend", "node_modules"]
+  "exclude": ["backend", "api", "node_modules"]
 }
