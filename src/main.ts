@@ -1,4 +1,4 @@
-// ─── Types (mirrored from backend) ───────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
 type Move      = -1 | 0 | 1;
 type SimResult = 'accepted' | 'rejected' | 'halted' | 'max_steps' | 'error';
 type SimMode   = 'local' | 'server';
@@ -24,8 +24,14 @@ interface Preset {
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-// ─── Config ───────────────────────────────────────────────────────────────────
-const API_URL = '/api';
+// Use relative path for Vercel, but allow localhost for dev
+let API_URL = '/api';
+if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+   // If you are running the backend separately on 3001, otherwise /api works with 'vercel dev'
+   if (!window.location.port || window.location.port === '5500' || window.location.port === '3000') {
+      API_URL = 'http://localhost:3001/api';
+   }
+}
 
 // ─── Machine State ────────────────────────────────────────────────────────────
 let tape:        string[]      = [];
@@ -33,7 +39,7 @@ let head:        number        = 0;
 let state:       string        = 'q0';
 let steps:       number        = 0;
 let running:     boolean       = false;
-let intervalId:  ReturnType<typeof setInterval> | null = null;
+let intervalId:  any           = null;
 let speed:       number        = 500;
 let lastWritten: number        = -1;
 let simMode:     SimMode       = 'local';
@@ -78,7 +84,7 @@ const LOCAL_PRESETS: Record<string, Preset> = {
   },
   equalAB: {
     id: 'equalAB', name: 'Accept aⁿbⁿ',
-    description: 'Accepts strings of the form aⁿbⁿ.',
+    description: 'Accepts strings of the form aⁿbⁿ (equal number of a\'s and b\'s).',
     input: 'aaabbb',
     transitions: {
       'q0_a': { write: 'X', move:  1, next: 'q1' },
@@ -97,19 +103,9 @@ const LOCAL_PRESETS: Record<string, Preset> = {
     },
     acceptStates: ['accept'], rejectStates: ['reject'],
   },
-  incrementUnary: {
-    id: 'incrementUnary', name: 'Increment Unary',
-    description: 'Appends one extra 1 to a unary number.',
-    input: '111',
-    transitions: {
-      'q0_1': { write: '1', move:  1, next: 'q0' },
-      'q0__': { write: '1', move:  0, next: 'halt' },
-    },
-    acceptStates: ['halt'], rejectStates: [],
-  },
   palindrome: {
     id: 'palindrome', name: 'Accept Palindromes',
-    description: 'Accepts binary palindromes by marking outermost pairs.',
+    description: 'Accepts binary palindromes (e.g. 10101).',
     input: '10101',
     transitions: {
       'q0_0': { write: 'X', move:  1, next: 'q1' },
@@ -138,13 +134,13 @@ const LOCAL_PRESETS: Record<string, Preset> = {
     acceptStates: ['accept'], rejectStates: ['reject'],
   },
   custom: {
-    id: 'custom', name: '✏️ Custom', description: 'Write your own rules below.',
+    id: 'custom', name: '✏️ Custom Code', description: 'Rules: state_symbol: write,move,next',
     input: '', transitions: {}, acceptStates: ['accept','halt'], rejectStates: ['reject'],
   },
 };
 
-// ─── Init ─────────────────────────────────────────────────────────────────────
-window.addEventListener('DOMContentLoaded', () => {
+// ─── DOM Initializer ──────────────────────────────────────────────────────────
+window.addEventListener('load', () => {
   populatePresetSelect();
   doLoadPreset();
   checkServerHealth();
@@ -152,30 +148,26 @@ window.addEventListener('DOMContentLoaded', () => {
 
 function populatePresetSelect(): void {
   const sel = document.getElementById('presetSelect') as HTMLSelectElement;
+  if (!sel) return;
   sel.innerHTML = Object.entries(LOCAL_PRESETS).map(([id, p]) =>
     `<option value="${id}">${p.name}</option>`
   ).join('');
 }
 
-// ─── Server Health Check ──────────────────────────────────────────────────────
+// ─── Health Check ─────────────────────────────────────────────────────────────
 async function checkServerHealth(): Promise<void> {
   const indicator = document.getElementById('serverIndicator');
   if (!indicator) return;
   try {
-    // Increased timeout to 5s to allow for Vercel Cold Starts
-    const r = await fetch(`${API_URL}/presets`, { signal: AbortSignal.timeout(5000) });
+    const r = await fetch(`${API_URL}/presets`, { signal: AbortSignal.timeout(4000) });
     if (r.ok) {
-      indicator.className   = 'server-dot online';
-      indicator.title       = 'Backend online (Vercel Functions)';
+      indicator.className = 'server-dot online';
+      indicator.title = 'Backend Online';
       setModeAvailability(true);
-    } else {
-      console.warn('Server responded with error:', r.status);
-      throw new Error();
-    }
+    } else { throw new Error(); }
   } catch (err) {
-    console.error('API health check failed:', err);
     indicator.className = 'server-dot offline';
-    indicator.title     = 'Backend offline — Using local engine';
+    indicator.title = 'Backend Offline — Local Mode Only';
     setModeAvailability(false);
     if (simMode === 'server') doSwitchMode('local');
   }
@@ -186,101 +178,85 @@ function setModeAvailability(online: boolean): void {
   if (serverBtn) serverBtn.disabled = !online;
 }
 
-// ─── Mode Toggle ──────────────────────────────────────────────────────────────
+// ─── Mode & Presets ────────────────────────────────────────────────────────────
 function doSwitchMode(mode: SimMode): void {
   simMode = mode;
-  document.getElementById('modeLocal')!.classList.toggle('active', mode === 'local');
-  document.getElementById('modeServer')!.classList.toggle('active', mode === 'server');
-  showToast(`Mode: ${mode === 'local' ? '🖥️ Local engine' : '☁️ Server engine'}`, 'info');
+  document.getElementById('modeLocal')?.classList.toggle('active', mode === 'local');
+  document.getElementById('modeServer')?.classList.toggle('active', mode === 'server');
+  showToast(`Engine: ${mode === 'local' ? 'Local Browser' : 'Cloud Compute'}`, 'info');
 }
 (window as any).switchMode = doSwitchMode;
 
-// ─── Preset Loader ────────────────────────────────────────────────────────────
 function doLoadPreset(): void {
-  const key    = (document.getElementById('presetSelect') as HTMLSelectElement).value;
+  const sel = document.getElementById('presetSelect') as HTMLSelectElement;
+  if (!sel) return;
+  const key = sel.value;
   const preset = LOCAL_PRESETS[key];
   if (!preset) return;
 
-  transitions  = { ...preset.transitions };
+  transitions = { ...preset.transitions };
   acceptStates = [...preset.acceptStates];
   rejectStates = [...preset.rejectStates];
 
-  (document.getElementById('inputString') as HTMLInputElement).value = preset.input;
-  (document.getElementById('transitionEditor') as HTMLTextAreaElement).value =
-    transitionsToText(transitions);
+  const inputEl = document.getElementById('inputString') as HTMLInputElement;
+  const editorEl = document.getElementById('transitionEditor') as HTMLTextAreaElement;
+  if (inputEl) inputEl.value = preset.input;
+  if (editorEl) editorEl.value = transitionsToText(transitions);
 
-  resetMachine();
+  (window as any).initialize();
   updateTransitionTable();
-  updatePresetsFromServer();
 }
 (window as any).loadPreset = doLoadPreset;
 
-async function updatePresetsFromServer(): Promise<void> {
-  try {
-    const r = await fetch(`${API_URL}/presets`, { signal: AbortSignal.timeout(2000) });
-    if (!r.ok) return;
-    const data = await r.json() as { presets: Preset[] };
-    // Merge server presets into select if any custom ones exist
-    const sel = document.getElementById('presetSelect') as HTMLSelectElement;
-    const customServerPresets = data.presets.filter(p => p.id.startsWith('custom_'));
-    customServerPresets.forEach(p => {
-      if (!sel.querySelector(`option[value="${p.id}"]`)) {
-        const opt = document.createElement('option');
-        opt.value = p.id; opt.textContent = `☁️ ${p.name}`;
-        sel.appendChild(opt);
-        LOCAL_PRESETS[p.id] = p;
-      }
-    });
-  } catch { /* server offline, skip */ }
-}
-
-// ─── Transition Editor ────────────────────────────────────────────────────────
+// ─── Actions ──────────────────────────────────────────────────────────────────
 (window as any).applyTransitions = function(): void {
-  const text = (document.getElementById('transitionEditor') as HTMLTextAreaElement).value;
-  transitions = parseTransitions(text);
+  const editor = document.getElementById('transitionEditor') as HTMLTextAreaElement;
+  if (!editor) return;
+  transitions = parseTransitions(editor.value);
   updateTransitionTable();
-  showToast('Transitions applied ✅', 'success');
-  resetMachine();
+  showToast('Transitions Applied ✅', 'success');
+  (window as any).initialize();
 };
 
 (window as any).savePresetToServer = async function(): Promise<void> {
-  const name = prompt('Preset name:');
+  if (simMode === 'local' && (document.getElementById('serverIndicator')?.classList.contains('offline'))) {
+      showToast('Server is offline — cannot save.', 'error');
+      return;
+  }
+  const name = prompt('Name your machine:');
   if (!name) return;
   try {
     const r = await fetch(`${API_URL}/presets`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
-        name, description: 'Custom preset',
-        input: (document.getElementById('inputString') as HTMLInputElement).value,
-        transitions, acceptStates, rejectStates,
+        name, transitions, acceptStates, rejectStates,
+        input: (document.getElementById('inputString') as HTMLInputElement).value
       }),
     });
-    const data = await r.json();
-    if (r.ok) showToast(`Saved to server as "${name}" (id: ${data.id}) ☁️`, 'success');
-    else      showToast(`Save failed: ${data.error}`, 'error');
-  } catch (err: any) {
-    console.error('Save error:', err);
-    showToast(`Server unreachable or not supported in this deployment.`, 'error');
+    if (r.ok) showToast(`Saved to Cloud: ${name} ☁️`, 'success');
+    else {
+      const d = await r.json();
+      showToast(d.error || 'Save failed', 'error');
+    }
+  } catch {
+    showToast('Network error — save failed.', 'error');
   }
 };
 
 function parseTransitions(text: string): TransitionMap {
   const result: TransitionMap = {};
-  for (const raw of text.split('\n')) {
-    const line  = raw.trim();
-    if (!line || line.startsWith('#')) continue;
-    const colon = line.indexOf(':');
-    if (colon === -1) continue;
-    const key   = line.slice(0, colon).trim().replace(/\s/g, '');
-    const parts = line.slice(colon + 1).trim().split(',').map(s => s.trim());
-    if (parts.length < 3) continue;
-    const write  = parts[0];
-    const mv     = parts[1].toUpperCase();
-    const next   = parts[2];
-    const move   = mv === 'R' ? 1 : mv === 'L' ? -1 : 0;
-    result[key]  = { write, move: move as Move, next };
-  }
+  text.split('\n').forEach(line => {
+    line = line.split('#')[0].trim(); // Remove comments
+    if (!line) return;
+    const [keyPart, valPart] = line.split(':').map(s => s.trim());
+    if (!keyPart || !valPart) return;
+    const key = keyPart.replace(/\s/g, '');
+    const [write, moveStr, next] = valPart.split(',').map(s => s.trim());
+    if (!write || !moveStr || !next) return;
+    const move = moveStr.toUpperCase() === 'R' ? 1 : moveStr.toUpperCase() === 'L' ? -1 : 0;
+    result[key] = { write, move: move as Move, next };
+  });
   return result;
 }
 
@@ -291,98 +267,66 @@ function transitionsToText(t: TransitionMap): string {
   }).join('\n');
 }
 
-function updateTransitionTable(): void {
-  const wrap    = document.getElementById('transitionTableDisplay')!;
-  const entries = Object.entries(transitions);
-  if (!entries.length) {
-    wrap.innerHTML = '<p style="color:var(--text-dim);font-size:0.85rem;padding:8px">No transitions defined.</p>';
-    return;
-  }
-  let html = `<table class="tt"><thead><tr>
-    <th>Key</th><th>State</th><th>Read</th><th>Write</th><th>Move</th><th>Next State</th>
-  </tr></thead><tbody>`;
-  for (const [key, v] of entries) {
-    const parts  = key.split('_');
-    const st     = parts[0];
-    const sym    = parts.slice(1).join('_') || '_';
-    const mvStr  = v.move === 1 ? '→ R' : v.move === -1 ? '← L' : '● N';
-    const nxtCls = acceptStates.includes(v.next) ? 'tt-next'
-                 : (rejectStates.includes(v.next) || v.next === 'reject') ? 'tt-halt'
-                 : 'tt-next';
-    html += `<tr>
-      <td class="tt-state">${esc(key)}</td>
-      <td class="tt-state">${esc(st)}</td>
-      <td class="tt-symbol">${esc(sym)}</td>
-      <td class="tt-write">${esc(v.write)}</td>
-      <td class="tt-move">${mvStr}</td>
-      <td class="${nxtCls}">${esc(v.next)}</td>
-    </tr>`;
-  }
-  wrap.innerHTML = html + '</tbody></table>';
-}
-
-// ─── Machine Operations ───────────────────────────────────────────────────────
+// ─── Core Simulator ───────────────────────────────────────────────────────────
 (window as any).initialize = function(): void {
-  pauseMachine();
-  const input = (document.getElementById('inputString') as HTMLInputElement).value.trim();
-  tape  = ['_', ...input.split(''), '_'];
-  head  = 1; state = 'q0'; steps = 0; lastWritten = -1;
-  serverSteps = []; playbackIdx = 0;
-  clearLog(); hideResult();
+  (window as any).pause();
+  const inputEl = document.getElementById('inputString') as HTMLInputElement;
+  const input = inputEl ? inputEl.value.trim() : '';
+  tape = ['_', ...input.split(''), '_'];
+  head = 1;
+  state = 'q0';
+  steps = 0;
+  lastWritten = -1;
+  serverSteps = [];
+  playbackIdx = 0;
+
+  clearLog();
+  hideResult();
   updateStatus('LOADED', '');
-  render(); updateInfoBar(); setButtonStates(false);
+  render();
+  updateInfoBar();
+  setButtonStates(false);
 };
 
-function resetMachine(): void {
-  pauseMachine();
-  tape = []; head = 0; state = 'q0'; steps = 0; lastWritten = -1;
-  serverSteps = []; playbackIdx = 0;
-  (document.getElementById('tape') as HTMLElement).innerHTML = '';
-  clearLog(); hideResult();
-  updateStatus('READY', '');
-  updateInfoBar(); setButtonStates(false);
-}
+(window as any).resetMachine = function(): void {
+  (window as any).initialize();
+  showToast('Simulator Reset', 'info');
+};
 
-// ── LOCAL Step ────────────────────────────────────────────────────────────────
 function localStep(): void {
-  if (!tape.length) { (window as any).initialize(); return; }
-
+  if (tape.length === 0) return;
   if (isTerminal(state)) { handleTerminal(); return; }
 
-  const symbol = tape[head] ?? '_';
-  const key    = `${state}_${symbol}`;
+  const symbol = tape[head] || '_';
+  const key = `${state}_${symbol}`;
   const action = transitions[key];
 
   if (!action) {
-    addLog(steps, state, symbol, '—', '—', `No transition for "${key}"`);
-    showResult('rejected', `❌ REJECTED — no transition for (${state}, "${symbol}") after ${steps} steps`);
+    addLog(steps, state, symbol, '—', '—', 'REJECT');
+    showResult('rejected', `❌ REJECTED: No rule for (${state}, ${symbol})`);
     updateStatus('REJECTED', 'rejected');
     state = 'reject';
-    pauseMachine();
+    (window as any).pause();
     return;
   }
 
-  addLog(steps, state, symbol, action.write,
-    action.move === 1 ? 'R' : action.move === -1 ? 'L' : 'N', action.next);
+  addLog(steps, state, symbol, action.write, action.move === 1 ? 'R' : action.move === -1 ? 'L' : 'N', action.next);
 
   tape[head] = action.write;
   lastWritten = head;
-  head  += action.move;
-  state  = action.next;
+  head += action.move;
+  state = action.next;
   steps++;
 
-  if (head < 0)              { tape.unshift('_'); head = 0; }
-  if (head >= tape.length)   { tape.push('_'); }
+  if (head < 0) { tape.unshift('_'); head = 0; }
+  if (head >= tape.length) { tape.push('_'); }
 
-  render(); updateInfoBar();
+  render();
+  updateInfoBar();
   if (isTerminal(state)) handleTerminal();
 }
 
-// ── SERVER Step (stateless API call) ─────────────────────────────────────────
 async function serverStep(): Promise<void> {
-  if (!tape.length) { (window as any).initialize(); return; }
-  if (isTerminal(state)) { handleTerminal(); return; }
-
   try {
     const r = await fetch(`${API_URL}/simulate/step`, {
       method: 'POST',
@@ -390,134 +334,115 @@ async function serverStep(): Promise<void> {
       body: JSON.stringify({ tape, head, state, transitions, acceptStates, rejectStates }),
     });
     const data = await r.json() as StepResponse;
-    tape        = data.tape;
-    head        = data.head;
-    state       = data.state;
+    tape = data.tape;
+    head = data.head;
+    state = data.state;
     lastWritten = data.written;
     steps++;
 
-    addLog(data.log.step, data.log.state, data.log.read,
-           data.log.written, data.log.move, data.log.nextState);
-    render(); updateInfoBar();
+    addLog(data.log.step, data.log.state, data.log.read, data.log.written, data.log.move, data.log.nextState);
+    render();
+    updateInfoBar();
 
     if (data.result) {
-      showResult(data.result,
-        `${data.result === 'accepted' ? '✅ ACCEPTED' : '❌ REJECTED'} — "${state}" after ${steps} steps`);
-      updateStatus(data.result.toUpperCase(), data.result === 'accepted' ? 'accepted' : 'rejected');
-      pauseMachine();
+       handleTerminal();
+       (window as any).pause();
     }
   } catch {
-    showToast('Server unreachable — switching to local engine.', 'error');
+    showToast('Server Error — Switching to Local', 'error');
     doSwitchMode('local');
     localStep();
   }
 }
 
-// ── SERVER Run (bulk simulate, then play back) ────────────────────────────────
-async function serverRun(): Promise<void> {
-  if (!tape.length) (window as any).initialize();
-  updateStatus('RUNNING', 'running');
-  setButtonStates(true);
-
-  const input = (document.getElementById('inputString') as HTMLInputElement).value.trim();
-  try {
-    const r = await fetch(`${API_URL}/simulate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ input, transitions, acceptStates, rejectStates, maxSteps: 2000 }),
-    });
-    const data = await r.json() as SimulateResponse;
-    serverSteps      = data.steps;
-    serverFinalTape  = data.finalTape;
-    serverFinalState = data.finalState;
-    serverResult     = data.result;
-    playbackIdx      = 0;
-
-    // Reset to initial tape for visual playback
-    tape  = ['_', ...input.split(''), '_'];
-    head  = 1; state = 'q0'; steps = 0; lastWritten = -1;
-
-    // Play back each step visually
-    running = true;
-    intervalId = setInterval(() => {
-      if (playbackIdx >= serverSteps.length) {
-        // Playback done — show final result
-        tape  = [...serverFinalTape];
-        head  = serverFinalState === 'halt' || acceptStates.includes(serverFinalState) ? head : head;
-        state = serverFinalState;
-        render(); updateInfoBar();
-        showResult(serverResult, data.message ?? '');
-        updateStatus(serverResult.toUpperCase().replace('_', ' '), mapResultCls(serverResult));
-        pauseMachine();
-        return;
-      }
-      const log = serverSteps[playbackIdx++];
-      addLog(log.step, log.state, log.read, log.written, log.move, log.nextState);
-
-      // Reconstruct tape state for the frame
-      if (playbackIdx <= serverSteps.length) {
-        tape[log.head] = log.written !== '—' ? log.written : tape[log.head];
-        lastWritten    = log.head;
-        head           = log.head + (log.move === 'R' ? 1 : log.move === 'L' ? -1 : 0);
-        state          = log.nextState;
-        steps          = log.step + 1;
-        if (head < 0)             { tape.unshift('_'); head = 0; }
-        if (head >= tape.length)  { tape.push('_'); }
-      }
-      render(); updateInfoBar();
-    }, speed);
-
-  } catch {
-    showToast('Server unreachable — falling back to local engine.', 'error');
-    doSwitchMode('local');
-    (window as any).run();
-  }
-}
-
-// ── Public Button Handlers ────────────────────────────────────────────────────
 (window as any).step = function(): void {
   if (simMode === 'server') serverStep();
-  else                      localStep();
+  else localStep();
 };
 
 (window as any).run = function(): void {
   if (running) return;
-  if (!tape.length) (window as any).initialize();
+  if (tape.length <= 2 && (document.getElementById('inputString') as HTMLInputElement).value) {
+      (window as any).initialize();
+  }
   if (isTerminal(state)) return;
 
-  if (simMode === 'server') { serverRun(); return; }
+  if (simMode === 'server') {
+     serverRun();
+     return;
+  }
 
   running = true;
   setButtonStates(true);
   updateStatus('RUNNING', 'running');
   intervalId = setInterval(() => {
-    if (isTerminal(state)) { pauseMachine(); handleTerminal(); }
-    else                   { localStep(); }
+    if (isTerminal(state)) { (window as any).pause(); handleTerminal(); }
+    else localStep();
   }, speed);
 };
 
-(window as any).pause = function(): void { pauseMachine(); };
+async function serverRun(): Promise<void> {
+  const input = (document.getElementById('inputString') as HTMLInputElement).value.trim();
+  try {
+    updateStatus('THINKING...', 'running');
+    const r = await fetch(`${API_URL}/simulate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input, transitions, acceptStates, rejectStates, maxSteps: 1000 }),
+    });
+    const data = await r.json() as SimulateResponse;
+    serverSteps = data.steps;
+    serverFinalTape = data.finalTape;
+    serverFinalState = data.finalState;
+    serverResult = data.result;
+    playbackIdx = 0;
 
-(window as any).resetMachine = function(): void { resetMachine(); };
+    // Reset for playback
+    tape = ['_', ...input.split(''), '_'];
+    head = 1; state = 'q0'; steps = 0; lastWritten = -1;
 
-function pauseMachine(): void {
-  if (intervalId) { clearInterval(intervalId); intervalId = null; }
+    running = true;
+    setButtonStates(true);
+    updateStatus('PLAYBACK', 'running');
+    intervalId = setInterval(() => {
+      if (playbackIdx >= serverSteps.length) {
+        tape = [...serverFinalTape];
+        state = serverFinalState;
+        render(); updateInfoBar();
+        showResult(serverResult, data.message || 'Halted');
+        updateStatus(serverResult.toUpperCase(), serverResult);
+        (window as any).pause();
+        return;
+      }
+      const log = serverSteps[playbackIdx++];
+      addLog(log.step, log.state, log.read, log.written, log.move, log.nextState);
+      tape[log.head] = log.written !== '—' ? log.written : tape[log.head];
+      lastWritten = log.head;
+      head = log.head + (log.move === 'R' ? 1 : log.move === 'L' ? -1 : 0);
+      state = log.nextState;
+      steps = log.step + 1;
+      if (head < 0) { tape.unshift('_'); head = 0; }
+      if (head >= tape.length) { tape.push('_'); }
+      render(); updateInfoBar();
+    }, speed);
+  } catch {
+    showToast('Server Error', 'error');
+    doSwitchMode('local');
+  }
+}
+
+(window as any).pause = function(): void {
+  if (intervalId) clearInterval(intervalId);
+  intervalId = null;
   running = false;
   setButtonStates(false);
   if (!isTerminal(state)) updateStatus('PAUSED', '');
-}
-
-(window as any).updateSpeed = function(val: string): void {
-  speed = parseInt(val, 10);
-  (document.getElementById('speedLabel') as HTMLElement).textContent = `${val}ms`;
-  if (running) { pauseMachine(); (window as any).run(); }
 };
 
-(window as any).clearLog = function(): void { clearLog(); };
-
-// ─── Render ───────────────────────────────────────────────────────────────────
+// ─── UI Rendering ─────────────────────────────────────────────────────────────
 function render(): void {
-  const tapeEl = document.getElementById('tape') as HTMLElement;
+  const tapeEl = document.getElementById('tape');
+  if (!tapeEl) return;
   tapeEl.innerHTML = '';
 
   tape.forEach((cell, idx) => {
@@ -530,127 +455,108 @@ function render(): void {
     tapeEl.appendChild(div);
   });
 
-  requestAnimationFrame(() => {
-    const wrapper  = document.querySelector('.tape-scroll-wrapper') as HTMLElement;
-    const headCell = tapeEl.children[head] as HTMLElement | undefined;
-    if (headCell && wrapper) {
-      const target = headCell.offsetLeft - wrapper.clientWidth / 2 + headCell.offsetWidth / 2;
-      wrapper.scrollTo({ left: target, behavior: 'smooth' });
-      const arrow     = document.getElementById('headArrow') as HTMLElement;
-      const arrowLeft = headCell.offsetLeft + headCell.offsetWidth / 2 - wrapper.scrollLeft;
-      arrow.style.left = `${arrowLeft}px`;
+  const wrapper = document.querySelector('.tape-scroll-wrapper') as HTMLElement;
+  const headCell = tapeEl.children[head] as HTMLElement;
+  if (headCell && wrapper) {
+    const target = headCell.offsetLeft - (wrapper.clientWidth / 2) + (headCell.offsetWidth / 2);
+    wrapper.scrollTo({ left: target, behavior: 'smooth' });
+    const arrow = document.getElementById('headArrow');
+    if (arrow) {
+      const arrowPos = headCell.offsetLeft + (headCell.offsetWidth / 2) - wrapper.scrollLeft;
+      arrow.style.left = `${arrowPos}px`;
     }
-  });
-}
-
-// ─── UI Helpers ───────────────────────────────────────────────────────────────
-function isTerminal(s: string): boolean {
-  return acceptStates.includes(s) || rejectStates.includes(s) || s === 'halt' || s === 'reject';
-}
-
-function handleTerminal(): void {
-  const r = acceptStates.includes(state) ? 'accepted'
-          : (rejectStates.includes(state) || state === 'reject') ? 'rejected'
-          : 'halted';
-  const icon = r === 'accepted' ? '✅ ACCEPTED' : r === 'rejected' ? '❌ REJECTED' : '⏹ HALTED';
-  showResult(r as SimResult, `${icon} — state "${state}" after ${steps} steps`);
-  updateStatus(r.toUpperCase(), mapResultCls(r as SimResult));
-  pauseMachine();
-}
-
-function mapResultCls(r: SimResult): string {
-  return r === 'accepted' ? 'accepted' : r === 'rejected' ? 'rejected' : 'halted';
+  }
 }
 
 function updateInfoBar(): void {
-  setText('stateDisplay', state || '—');
-  setText('headDisplay',  tape.length ? String(head) : '—');
+  setText('stateDisplay', state);
+  setText('headDisplay', String(head));
   setText('stepsDisplay', String(steps));
-  const sym = tape.length ? tape[head] : '—';
-  setText('lastReadDisplay', sym === '_' ? '⬜' : sym || '—');
+  const sym = tape[head] || '_';
+  setText('lastReadDisplay', sym === '_' ? '⬜' : sym);
 }
 
-function addLog(step: number, st: string, read: string, write: string, move: string, note: string): void {
-  const log = document.getElementById('computationLog')!;
-
-  if (!log.children.length) {
-    const hdr = document.createElement('div');
-    hdr.className = 'log-entry log-header-row';
-    hdr.innerHTML = `<span>#</span><span>STATE</span><span>READ</span><span>WRITE</span><span>MOVE → NEXT</span>`;
-    log.appendChild(hdr);
+function updateTransitionTable(): void {
+  const wrap = document.getElementById('transitionTableDisplay');
+  if (!wrap) return;
+  const res = Object.entries(transitions);
+  if (!res.length) {
+    wrap.innerHTML = '<p class="label-hint">No rules defined.</p>';
+    return;
   }
-  const row = document.createElement('div');
-  row.className = 'log-entry';
-  row.innerHTML = `
-    <span class="step-no">${step}</span>
-    <span class="log-state">${esc(st)}</span>
-    <span class="log-read">${esc(String(read))}</span>
-    <span class="log-write">${esc(String(write))}</span>
-    <span class="log-move">${esc(move)} <span style="color:var(--text-dim)">${esc(note)}</span></span>
-  `;
-  log.appendChild(row);
+  let h = `<table class="tt"><thead><tr><th>Rule</th><th>Write</th><th>Move</th><th>Next</th></tr></thead><tbody>`;
+  res.forEach(([k, v]) => {
+    h += `<tr><td>${k}</td><td>${v.write}</td><td>${v.move === 1 ? 'R' : 'L'}</td><td>${v.next}</td></tr>`;
+  });
+  wrap.innerHTML = h + '</tbody></table>';
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function isTerminal(s: string): boolean {
+  return acceptStates.includes(s) || rejectStates.includes(s) || s === 'halt' || s === 'accept' || s === 'reject';
+}
+
+function handleTerminal(): void {
+  const isAccept = acceptStates.includes(state) || state === 'accept';
+  const res = isAccept ? 'accepted' : 'rejected';
+  showResult(res, `${isAccept ? '✅ ACCEPTED' : '❌ REJECTED'} in ${steps} steps`);
+  updateStatus(res.toUpperCase(), res);
+}
+
+function addLog(s: number, st: string, r: string, w: string, m: string, next: string): void {
+  const log = document.getElementById('computationLog');
+  if (!log) return;
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  div.innerHTML = `<span>${s}</span><span>${st}</span><span>${r}</span><span>${w}</span><span>${m} → ${next}</span>`;
+  log.appendChild(div);
   log.scrollTop = log.scrollHeight;
-  (document.getElementById('logCount') as HTMLElement).textContent =
-    `${step + 1} step${step > 0 ? 's' : ''}`;
+  setText('logCount', `${s + 1} steps`);
 }
 
 function clearLog(): void {
-  (document.getElementById('computationLog') as HTMLElement).innerHTML = '';
-  (document.getElementById('logCount') as HTMLElement).textContent = '0 steps';
+  const log = document.getElementById('computationLog');
+  if (log) log.innerHTML = '';
+  setText('logCount', '0 steps');
 }
 
-function showResult(type: SimResult | string, msg: string): void {
-  const el = document.getElementById('resultBanner')!;
-  el.className = `result-banner ${type}`;
-  el.textContent = msg;
+function showResult(cls: string, msg: string): void {
+  const b = document.getElementById('resultBanner');
+  if (b) { b.className = `result-banner ${cls}`; b.textContent = msg; }
 }
 
 function hideResult(): void {
-  document.getElementById('resultBanner')!.className = 'result-banner hidden';
+  const b = document.getElementById('resultBanner');
+  if (b) b.className = 'result-banner hidden';
 }
 
-function updateStatus(label: string, cls: string): void {
-  const badge = document.getElementById('statusBadge')!;
-  badge.textContent = label;
-  badge.className   = 'status-badge' + (cls ? ` ${cls}` : '');
+function updateStatus(txt: string, cls: string): void {
+  const b = document.getElementById('statusBadge');
+  if (b) { b.textContent = txt; b.className = `status-badge ${cls}`; }
 }
 
-function setButtonStates(isRunning: boolean): void {
-  (document.getElementById('runBtn')   as HTMLButtonElement).disabled = isRunning;
-  (document.getElementById('pauseBtn') as HTMLButtonElement).disabled = !isRunning;
-  (document.getElementById('stepBtn')  as HTMLButtonElement).disabled = isRunning;
+function setButtonStates(run: boolean): void {
+  (document.getElementById('runBtn') as any).disabled = run;
+  (document.getElementById('pauseBtn') as any).disabled = !run;
+  (document.getElementById('stepBtn') as any).disabled = run;
 }
 
-function setText(id: string, val: string): void {
+(window as any).updateSpeed = function(v: string): void {
+  speed = parseInt(v);
+  setText('speedLabel', `${v}ms`);
+  if (running) { (window as any).pause(); (window as any).run(); }
+};
+
+function setText(id: string, v: string): void {
   const el = document.getElementById(id);
-  if (el) el.textContent = val;
+  if (el) el.textContent = v;
 }
 
-function esc(s: string): string {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function showToast(m: string, t: string): void {
+  const d = document.createElement('div');
+  d.className = `toast ${t}`;
+  d.style.cssText = `position:fixed;bottom:20px;right:20px;background:#333;color:#fff;padding:10px 20px;border-radius:10px;z-index:9999;border-left:5px solid ${t === 'success' ? '#4ade80' : '#f87171'}`;
+  d.textContent = m;
+  document.body.appendChild(d);
+  setTimeout(() => d.remove(), 3000);
 }
-
-// ─── Toast ────────────────────────────────────────────────────────────────────
-function showToast(msg: string, type: 'success' | 'error' | 'info' = 'info'): void {
-  const colors: Record<string, { bg: string; border: string; color: string }> = {
-    success: { bg:'rgba(74,222,128,0.15)',  border:'rgba(74,222,128,0.4)',  color:'#4ade80' },
-    error:   { bg:'rgba(248,113,113,0.15)', border:'rgba(248,113,113,0.4)', color:'#f87171' },
-    info:    { bg:'rgba(108,99,255,0.15)',  border:'rgba(108,99,255,0.4)',  color:'#a78bfa' },
-  };
-  const c = colors[type];
-  const t = document.createElement('div');
-  t.style.cssText = `
-    position:fixed;bottom:24px;right:24px;z-index:9999;
-    background:${c.bg};border:1px solid ${c.border};color:${c.color};
-    padding:12px 20px;border-radius:10px;font-size:0.85rem;font-weight:600;
-    font-family:Inter,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,0.4);
-    backdrop-filter:blur(12px);animation:slideInToast 0.3s cubic-bezier(0.34,1.56,0.64,1);
-  `;
-  t.textContent = msg;
-  document.body.appendChild(t);
-  setTimeout(() => t.remove(), 2800);
-}
-
-const _style = document.createElement('style');
-_style.textContent = `@keyframes slideInToast{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}`;
-document.head.appendChild(_style);
