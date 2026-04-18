@@ -4,9 +4,9 @@
   "description": "Turing Machine Simulator — TOC Assignment",
   "scripts": {
     "build": "tsc",
-    "dev:server": "cd server && npx ts-node-dev --respawn --transpile-only src/index.ts",
+    "dev:server": "cd backend/server && npx ts-node-dev --respawn --transpile-only src/index.ts",
     "dev": "concurrently \"npm run dev:server\" \"npm run build -- --watch\"",
-    "setup": "npm install && cd server && npm install"
+    "setup": "npm install && cd backend/server && npm install"
   },
   "devDependencies": {
     "@vercel/node": "^3.0.0",

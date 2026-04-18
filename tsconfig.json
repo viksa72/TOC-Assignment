@@ -4,13 +4,13 @@
     "module": "ES2020",
     "lib": ["ES2020", "DOM"],
     "outDir": "./",
-    "rootDir": "./src",
+    "rootDir": "./frontend",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "noEmitOnError": true
   },
-  "include": ["src/**/*"],
-  "exclude": ["server", "node_modules"]
+  "include": ["frontend/**/*"],
+  "exclude": ["backend", "node_modules"]
 }
