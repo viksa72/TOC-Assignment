@@ -162,15 +162,20 @@ async function checkServerHealth(): Promise<void> {
   const indicator = document.getElementById('serverIndicator');
   if (!indicator) return;
   try {
-    const r = await fetch(`${API_URL}/presets`, { signal: AbortSignal.timeout(2000) });
+    // Increased timeout to 5s to allow for Vercel Cold Starts
+    const r = await fetch(`${API_URL}/presets`, { signal: AbortSignal.timeout(5000) });
     if (r.ok) {
       indicator.className   = 'server-dot online';
-      indicator.title       = 'Backend online';
+      indicator.title       = 'Backend online (Vercel Functions)';
       setModeAvailability(true);
-    } else { throw new Error(); }
-  } catch {
+    } else {
+      console.warn('Server responded with error:', r.status);
+      throw new Error();
+    }
+  } catch (err) {
+    console.error('API health check failed:', err);
     indicator.className = 'server-dot offline';
-    indicator.title     = 'Backend offline — using local engine';
+    indicator.title     = 'Backend offline — Using local engine';
     setModeAvailability(false);
     if (simMode === 'server') doSwitchMode('local');
   }
@@ -254,8 +259,9 @@ async function updatePresetsFromServer(): Promise<void> {
     const data = await r.json();
     if (r.ok) showToast(`Saved to server as "${name}" (id: ${data.id}) ☁️`, 'success');
     else      showToast(`Save failed: ${data.error}`, 'error');
-  } catch {
-    showToast('Server offline — cannot save preset.', 'error');
+  } catch (err: any) {
+    console.error('Save error:', err);
+    showToast(`Server unreachable or not supported in this deployment.`, 'error');
   }
 };
 
