@@ -8,9 +8,11 @@
     "dev": "concurrently \"npm run dev:server\" \"npm run build -- --watch\"",
     "setup": "npm install && cd backend/server && npm install"
   },
+  "dependencies": {
+    "typescript": "^5.4.5"
+  },
   "devDependencies": {
     "@vercel/node": "^3.0.0",
-    "concurrently": "^8.2.2",
-    "typescript": "^5.4.5"
+    "concurrently": "^8.2.2"
   }
 }
