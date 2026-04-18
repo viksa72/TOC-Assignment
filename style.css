@@ -213,13 +213,16 @@ textarea {
 .input-row input { flex: 1; }
 
 .info-chip {
-  display: flex; align-items: center; gap: 6px;
-  padding: 8px 12px;
+  display: flex; align-items: center; gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
   background: rgba(108,99,255,0.08);
   border: 1px solid rgba(108,99,255,0.2);
   border-radius: var(--radius-sm);
-  font-size: 0.8rem; color: var(--text-muted);
+  font-size: 0.78rem; color: var(--text-muted);
+  line-height: 1.4;
 }
+.info-chip > span { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 .info-chip code {
   font-family: 'JetBrains Mono', monospace;
   color: #a78bfa; font-size: 0.85rem;

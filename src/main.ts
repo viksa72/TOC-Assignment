@@ -326,35 +326,116 @@ function localStep(): void {
   if (isTerminal(state)) handleTerminal();
 }
 
+// ── SERVER Step (stateless API call) ─────────────────────────────────────────
 async function serverStep(): Promise<void> {
+  if (isTerminal(state)) { handleTerminal(); return; }
   try {
+    updateStatus('THINKING...', 'running');
     const r = await fetch(`${API_URL}/simulate/step`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tape, head, state, transitions, acceptStates, rejectStates }),
     });
+    if (!r.ok) throw new Error('Server returned error');
+    
     const data = await r.json() as StepResponse;
-    tape = data.tape;
-    head = data.head;
-    state = data.state;
+    tape        = data.tape;
+    head        = data.head;
+    state       = data.state;
     lastWritten = data.written;
     steps++;
 
     addLog(data.log.step, data.log.state, data.log.read, data.log.written, data.log.move, data.log.nextState);
     render();
     updateInfoBar();
+    updateStatus('READY', '');
 
     if (data.result) {
-       handleTerminal();
-       (window as any).pause();
+      handleTerminal();
+      (window as any).pause();
     }
-  } catch {
-    showToast('Server Error — Switching to Local', 'error');
+  } catch (err) {
+    console.warn('Server step failed:', err);
+    showToast('Cloud error — Switching to Local', 'error');
     doSwitchMode('local');
     localStep();
   }
 }
 
+// ── SERVER Run (bulk simulate, then play back) ────────────────────────────────
+async function serverRun(): Promise<void> {
+  const inputEl = document.getElementById('inputString') as HTMLInputElement;
+  const input = inputEl ? inputEl.value.trim() : '';
+
+  try {
+    updateStatus('COMPUTING...', 'running');
+    setButtonStates(true);
+    
+    const r = await fetch(`${API_URL}/simulate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input, transitions, acceptStates, rejectStates, maxSteps: 2000 }),
+    });
+    
+    if (!r.ok) throw new Error('Cloud simulation failed');
+    const data = await r.json() as SimulateResponse;
+    
+    serverSteps      = data.steps;
+    serverFinalTape  = data.finalTape;
+    serverFinalState = data.finalState;
+    serverResult     = data.result;
+    playbackIdx      = 0;
+
+    // Reset local state to match start for playback
+    tape  = ['_', ...input.split(''), '_'];
+    head  = 1; state = 'q0'; steps = 0; lastWritten = -1;
+    clearLog();
+    render();
+
+    running = true;
+    updateStatus('PLAYBACK', 'running');
+    
+    intervalId = setInterval(() => {
+      if (playbackIdx >= serverSteps.length) {
+        // Playback finished — show final cloud result
+        tape  = [...serverFinalTape];
+        state = serverFinalState;
+        render(); updateInfoBar();
+        showResult(serverResult, data.message || 'Simulation Complete');
+        updateStatus(serverResult.toUpperCase().replace('_', ' '), serverResult);
+        (window as any).pause();
+        return;
+      }
+
+      const log = serverSteps[playbackIdx++];
+      addLog(log.step, log.state, log.read, log.written, log.move, log.nextState);
+
+      // Apply the step visually
+      tape[log.head] = log.written !== '—' ? log.written : tape[log.head];
+      lastWritten    = log.head;
+      
+      // Calculate next visual head position
+      const moveVal = log.move === 'R' ? 1 : log.move === 'L' ? -1 : 0;
+      head  = log.head + moveVal;
+      state = log.nextState;
+      steps = log.step + 1;
+
+      // Ensure tape expansion doesn't break visuals
+      if (head < 0) { tape.unshift('_'); head = 0; }
+      if (head >= tape.length) { tape.push('_'); }
+
+      render();
+      updateInfoBar();
+    }, speed);
+  } catch (err) {
+    console.error('Cloud run error:', err);
+    showToast('Cloud logic failed — Falling back to Local', 'error');
+    doSwitchMode('local');
+    (window as any).run();
+  }
+}
+
+// ── Public Button Handlers ────────────────────────────────────────────────────
 (window as any).step = function(): void {
   if (simMode === 'server') serverStep();
   else localStep();
@@ -362,74 +443,29 @@ async function serverStep(): Promise<void> {
 
 (window as any).run = function(): void {
   if (running) return;
-  if (tape.length <= 2 && (document.getElementById('inputString') as HTMLInputElement).value) {
-      (window as any).initialize();
+  if (tape.length <= 2) {
+    const inputEl = document.getElementById('inputString') as HTMLInputElement;
+    if (inputEl && inputEl.value) (window as any).initialize();
   }
   if (isTerminal(state)) return;
 
   if (simMode === 'server') {
-     serverRun();
-     return;
+    serverRun();
+    return;
   }
 
   running = true;
   setButtonStates(true);
   updateStatus('RUNNING', 'running');
   intervalId = setInterval(() => {
-    if (isTerminal(state)) { (window as any).pause(); handleTerminal(); }
-    else localStep();
+    if (isTerminal(state)) {
+      (window as any).pause();
+      handleTerminal();
+    } else {
+      localStep();
+    }
   }, speed);
 };
-
-async function serverRun(): Promise<void> {
-  const input = (document.getElementById('inputString') as HTMLInputElement).value.trim();
-  try {
-    updateStatus('THINKING...', 'running');
-    const r = await fetch(`${API_URL}/simulate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ input, transitions, acceptStates, rejectStates, maxSteps: 1000 }),
-    });
-    const data = await r.json() as SimulateResponse;
-    serverSteps = data.steps;
-    serverFinalTape = data.finalTape;
-    serverFinalState = data.finalState;
-    serverResult = data.result;
-    playbackIdx = 0;
-
-    // Reset for playback
-    tape = ['_', ...input.split(''), '_'];
-    head = 1; state = 'q0'; steps = 0; lastWritten = -1;
-
-    running = true;
-    setButtonStates(true);
-    updateStatus('PLAYBACK', 'running');
-    intervalId = setInterval(() => {
-      if (playbackIdx >= serverSteps.length) {
-        tape = [...serverFinalTape];
-        state = serverFinalState;
-        render(); updateInfoBar();
-        showResult(serverResult, data.message || 'Halted');
-        updateStatus(serverResult.toUpperCase(), serverResult);
-        (window as any).pause();
-        return;
-      }
-      const log = serverSteps[playbackIdx++];
-      addLog(log.step, log.state, log.read, log.written, log.move, log.nextState);
-      tape[log.head] = log.written !== '—' ? log.written : tape[log.head];
-      lastWritten = log.head;
-      head = log.head + (log.move === 'R' ? 1 : log.move === 'L' ? -1 : 0);
-      state = log.nextState;
-      steps = log.step + 1;
-      if (head < 0) { tape.unshift('_'); head = 0; }
-      if (head >= tape.length) { tape.push('_'); }
-      render(); updateInfoBar();
-    }, speed);
-  } catch {
-    showToast('Server Error', 'error');
-    doSwitchMode('local');
-  }
-}
 
 (window as any).pause = function(): void {
   if (intervalId) clearInterval(intervalId);
